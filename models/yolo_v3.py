@@ -366,3 +366,7 @@ class myYOLOv3(nn.Module):
             """
 
             return conf_loss, cls_loss, txtytwth_loss, total_loss
+
+
+if __name__ == '__main__':
+    pass
