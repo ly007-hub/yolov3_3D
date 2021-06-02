@@ -2,6 +2,11 @@ import numpy as np
 from data import *
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+
 
 CLASS_COLOR = [(np.random.randint(255),np.random.randint(255),np.random.randint(255)) for _ in range(len(VOC_CLASSES))]
 # We use ignore thresh to decide which anchor box can be kept.
@@ -110,6 +115,51 @@ def compute_iou(anchor_boxes, gt_box):
     return IoU
 
 
+def compute_iou3D(anchor_boxes, gt_box):
+    """
+    Input:
+        anchor_boxes : ndarray -> [[c_x_s, c_y_s, anchor_w, anchor_h], ..., [c_x_s, c_y_s, anchor_w, anchor_h]].
+        gt_box : ndarray -> [c_x_s, c_y_s, anchor_w, anchor_h].
+    Output:
+        iou : ndarray -> [iou_1, iou_2, ..., iou_m], and m is equal to the number of anchor boxes.
+    """
+    # compute the iou between anchor box and gt box
+    # First, change [c_x_s, c_y_s, anchor_w, anchor_h] ->  [xmin, ymin, xmax, ymax]
+    # anchor box :
+    ab_x1y1_x2y2 = np.zeros([len(anchor_boxes), 6])
+    ab_x1y1_x2y2[:, 0] = anchor_boxes[:, 0] - anchor_boxes[:, 3] / 2  # xmin
+    ab_x1y1_x2y2[:, 1] = anchor_boxes[:, 0] + anchor_boxes[:, 3] / 2  # xmax
+    ab_x1y1_x2y2[:, 2] = anchor_boxes[:, 1] - anchor_boxes[:, 4] / 2  # ymin
+    ab_x1y1_x2y2[:, 3] = anchor_boxes[:, 1] + anchor_boxes[:, 4] / 2  # ymax
+    ab_x1y1_x2y2[:, 4] = anchor_boxes[:, 2] - anchor_boxes[:, 5] / 2  # zmin
+    ab_x1y1_x2y2[:, 5] = anchor_boxes[:, 2] + anchor_boxes[:, 5] / 2  # zmax
+    w_ab, h_ab, d_ab = anchor_boxes[:, 3], anchor_boxes[:, 4], anchor_boxes[:, 5]
+
+    # gt_box :
+    # We need to expand gt_box(ndarray) to the shape of anchor_boxes(ndarray), in order to compute IoU easily.
+    gt_box_expand = np.repeat(gt_box, len(anchor_boxes), axis=0)
+
+    gb_x1y1_x2y2 = np.zeros([len(anchor_boxes), 6])
+    gb_x1y1_x2y2[:, 0] = gt_box_expand[:, 0] - gt_box_expand[:, 3] / 2  # xmin
+    gb_x1y1_x2y2[:, 1] = gt_box_expand[:, 0] + gt_box_expand[:, 3] / 2  # xmax
+    gb_x1y1_x2y2[:, 2] = gt_box_expand[:, 1] - gt_box_expand[:, 4] / 2  # ymin
+    gb_x1y1_x2y2[:, 3] = gt_box_expand[:, 1] + gt_box_expand[:, 4] / 2  # ymax
+    gb_x1y1_x2y2[:, 4] = gt_box_expand[:, 2] - gt_box_expand[:, 5] / 2  # zmin
+    gb_x1y1_x2y2[:, 5] = gt_box_expand[:, 2] + gt_box_expand[:, 5] / 2  # zmax
+    w_gt, h_gt, d_gt = gt_box_expand[:, 3], gt_box_expand[:, 4], gt_box_expand[:, 5]
+
+    # Then we compute IoU between anchor_box and gt_box
+    S_gt = w_gt * h_gt * d_gt
+    S_ab = w_ab * h_ab * d_ab
+    I_w = np.minimum(gb_x1y1_x2y2[:, 1], ab_x1y1_x2y2[:, 1]) - np.maximum(gb_x1y1_x2y2[:, 0], ab_x1y1_x2y2[:, 0])
+    I_h = np.minimum(gb_x1y1_x2y2[:, 3], ab_x1y1_x2y2[:, 3]) - np.maximum(gb_x1y1_x2y2[:, 2], ab_x1y1_x2y2[:, 2])
+    I_d = np.minimum(gb_x1y1_x2y2[:, 5], ab_x1y1_x2y2[:, 5]) - np.maximum(gb_x1y1_x2y2[:, 4], ab_x1y1_x2y2[:, 4])
+    S_I = I_h * I_w * I_d
+    U = S_gt + S_ab - S_I + 1e-20
+    IoU = S_I / U
+
+    return IoU
+
 def set_anchors(anchor_size):
     """
     Input:
@@ -121,10 +171,10 @@ def set_anchors(anchor_size):
                                    [0, 0, anchor_w, anchor_h]].
     """
     anchor_number = len(anchor_size)
-    anchor_boxes = np.zeros([anchor_number, 4])
+    anchor_boxes = np.zeros([anchor_number, 6])
     for index, size in enumerate(anchor_size): 
-        anchor_w, anchor_h = size
-        anchor_boxes[index] = np.array([0, 0, anchor_w, anchor_h])
+        anchor_w, anchor_h, anchor_d = size
+        anchor_boxes[index] = np.array([0, 0, 0, anchor_w, anchor_h, anchor_d])
     
     return anchor_boxes
 
@@ -375,16 +425,150 @@ def multi_gt_creator(input_size, strides, label_lists, anchor_size):
     return gt_tensor
 
 
+def multi_gt_creator3D(input_size, strides, label_lists, anchor_size):
+    """creator multi scales gt"""
+    # prepare the all empty gt datas
+    batch_size = len(label_lists)
+    h, w, d = input_size
+    num_scale = len(strides)
+    gt_tensor = []
+
+    # generate gt datas
+    all_anchor_size = anchor_size
+    anchor_number = len(all_anchor_size) // num_scale
+    for s in strides:
+        gt_tensor.append(np.zeros([batch_size, h // s, w // s, d // s, anchor_number, 1 + 1 + 6 + 1 + 6]))
+    for batch_index in range(batch_size):
+        for gt_label in label_lists:
+            # get a bbox coords
+            gt_class = int(gt_label[-1])
+            xmin, xmax, ymin, ymax, zmin, zmax = gt_label[:-1]
+            # compute the center, width and height
+            c_x = (xmax + xmin) / 2
+            c_y = (ymax + ymin) / 2
+            c_z = (zmax + zmin) / 2
+            box_w = (xmax - xmin)
+            box_h = (ymax - ymin)
+            box_d = (zmax - zmin)
+
+            if box_w < 1. or box_h < 1. or box_d:
+                # print('A dirty data !!!')
+                continue
+
+                # compute the IoU
+            anchor_boxes = set_anchors(all_anchor_size)
+            gt_box = np.array([[0, 0, 0, box_w, box_h, box_d]])
+            iou = compute_iou3D(anchor_boxes, gt_box)
+
+            # We only consider those anchor boxes whose IoU is more than ignore thresh,
+            iou_mask = (iou > ignore_thresh)
+
+            if iou_mask.sum() == 0:
+                # We assign the anchor box with highest IoU score.
+                index = np.argmax(iou)
+                # s_indx, ab_ind = index // num_scale, index % num_scale
+                s_indx = index // anchor_number
+                ab_ind = index - s_indx * anchor_number
+                # get the corresponding stride
+                s = strides[s_indx]
+                # get the corresponding anchor box
+                p_w, p_h, p_d = anchor_boxes[index, 3], anchor_boxes[index, 4], anchor_boxes[index, 5]
+                # compute the gride cell location
+                c_x_s = c_x / s
+                c_y_s = c_y / s
+                c_z_s = c_z / s
+                grid_x = int(c_x_s)
+                grid_y = int(c_y_s)
+                grid_z = int(c_z_s)
+                # compute gt labels
+                tx = c_x_s - grid_x
+                ty = c_y_s - grid_y
+                tz = c_z_s - grid_z
+                tw = np.log(box_w / p_w)
+                th = np.log(box_h / p_h)
+                td = np.log(box_d / p_d)
+                weight = 2.0 - (box_w / w) * (box_h / h) * (box_d / d)
+
+                if grid_y < gt_tensor[s_indx].shape[1] and grid_x < gt_tensor[s_indx].shape[2] and grid_z < gt_tensor[s_indx].shape[3]:
+                    gt_tensor[s_indx][batch_index, grid_y, grid_x, grid_z, ab_ind, 0] = 1.0
+                    gt_tensor[s_indx][batch_index, grid_y, grid_x, grid_z, ab_ind, 1] = gt_class
+                    gt_tensor[s_indx][batch_index, grid_y, grid_x, grid_z, ab_ind, 2:8] = np.array([tx, ty, tz, tw, th, td])
+                    gt_tensor[s_indx][batch_index, grid_y, grid_x, grid_z, ab_ind, 8] = weight
+                    gt_tensor[s_indx][batch_index, grid_y, grid_x, grid_z, ab_ind, 9:] = np.array([xmin, ymin, zmin, xmax, ymax, zmax])
+
+            else:
+                # There are more than one anchor boxes whose IoU are higher than ignore thresh.
+                # But we only assign only one anchor box whose IoU is the best(objectness target is 1) and ignore other
+                # anchor boxes whose(we set their objectness as -1 which means we will ignore them during computing obj loss )
+                # iou_ = iou * iou_mask
+
+                # We get the index of the best IoU
+                best_index = np.argmax(iou)
+                for index, iou_m in enumerate(iou_mask):
+                    if iou_m:
+                        if index == best_index:
+                            # We assign the anchor box with highest IoU score.
+                            index = np.argmax(iou)
+                            # s_indx, ab_ind = index // num_scale, index % num_scale
+                            s_indx = index // anchor_number
+                            ab_ind = index - s_indx * anchor_number
+                            # get the corresponding stride
+                            s = strides[s_indx]
+                            # get the corresponding anchor box
+                            p_w, p_h, p_d = anchor_boxes[index, 3], anchor_boxes[index, 4], anchor_boxes[index, 5]
+                            # compute the gride cell location
+                            c_x_s = c_x / s
+                            c_y_s = c_y / s
+                            c_z_s = c_z / s
+                            grid_x = int(c_x_s)
+                            grid_y = int(c_y_s)
+                            grid_z = int(c_z_s)
+                            # compute gt labels
+                            tx = c_x_s - grid_x
+                            ty = c_y_s - grid_y
+                            tz = c_z_s - grid_z
+                            tw = np.log(box_w / p_w)
+                            th = np.log(box_h / p_h)
+                            td = np.log(box_d / p_d)
+                            weight = 2.0 - (box_w / w) * (box_h / h) * (box_d / d)
+
+                            if grid_y < gt_tensor[s_indx].shape[1] and grid_x < gt_tensor[s_indx].shape[2] and grid_z < gt_tensor[s_indx].shape[3]:
+                                gt_tensor[s_indx][batch_index, grid_y, grid_x, grid_z, ab_ind, 0] = 1.0
+                                gt_tensor[s_indx][batch_index, grid_y, grid_x, grid_z, ab_ind, 1] = gt_class
+                                gt_tensor[s_indx][batch_index, grid_y, grid_x, grid_z, ab_ind, 2:8] = np.array([tx, ty, tz, tw, th, td])
+                                gt_tensor[s_indx][batch_index, grid_y, grid_x, grid_z, ab_ind, 8] = weight
+                                gt_tensor[s_indx][batch_index, grid_y, grid_x, grid_z, ab_ind, 9:] = np.array([xmin, ymin, zmin, xmax, ymax, zmax])
+
+                        else:
+                            # we ignore other anchor boxes even if their iou scores are higher than ignore thresh
+                            # s_indx, ab_ind = index // num_scale, index % num_scale
+                            s_indx = index // anchor_number
+                            ab_ind = index - s_indx * anchor_number
+                            s = strides[s_indx]
+                            c_x_s = c_x / s
+                            c_y_s = c_y / s
+                            c_z_s = c_z / s
+                            grid_x = int(c_x_s)
+                            grid_y = int(c_y_s)
+                            grid_z = int(c_z_s)
+                            gt_tensor[s_indx][batch_index, grid_y, grid_x, grid_z, ab_ind, 0] = -1.0
+                            gt_tensor[s_indx][batch_index, grid_y, grid_x, grid_z, ab_ind, 8] = -1.0
+
+    gt_tensor = [gt.reshape(batch_size, -1, 1 + 1 + 6 + 1 + 6) for gt in gt_tensor]
+    gt_tensor = np.concatenate(gt_tensor, 1)
+
+    return gt_tensor
+
+
 def iou_score(bboxes_a, bboxes_b):
     """
-        bbox_1 : [B*N, 4] = [x1, y1, x2, y2]
-        bbox_2 : [B*N, 4] = [x1, y1, x2, y2]
+        bbox_1 : [B*N, 6] = [x1, y1, z1, x2, y2, z2]
+        bbox_2 : [B*N, 6] = [x1, y1, z1, x2, y2, z2]
     """
-    tl = torch.max(bboxes_a[:, :2], bboxes_b[:, :2])
-    br = torch.min(bboxes_a[:, 2:], bboxes_b[:, 2:])
-    dp = torch.max()
-    area_a = torch.prod(bboxes_a[:, 2:] - bboxes_a[:, :2], 1)
-    area_b = torch.prod(bboxes_b[:, 2:] - bboxes_b[:, :2], 1)
+    tl = torch.max(bboxes_a[:, :3], bboxes_b[:, :3])
+    br = torch.min(bboxes_a[:, 3:], bboxes_b[:, 3:])
+    area_a = torch.prod(bboxes_a[:, 3:] - bboxes_a[:, :3], 1)
+    area_b = torch.prod(bboxes_b[:, 3:] - bboxes_b[:, :3], 1)
 
     en = (tl < br).type(tl.type()).prod(dim=1)
     area_i = torch.prod(br - tl, 1) * en  # * ((tl < br).all())
@@ -409,26 +593,29 @@ def loss(pred_conf, pred_cls, pred_txtytwth, label, num_classes, obj_loss_f='mse
 
     pred_conf = torch.sigmoid(pred_conf[:, :, 0])
     pred_cls = pred_cls.permute(0, 2, 1)
-    txty_pred = pred_txtytwth[:, :, :2]
-    twth_pred = pred_txtytwth[:, :, 2:]
+    txtytz_pred = pred_txtytwth[:, :, :3]
+    twthtd_pred = pred_txtytwth[:, :, 3:]
         
     gt_conf = label[:, :, 0].float()
+    # print('gt_conf', gt_conf)
     gt_obj = label[:, :, 1].float()
     gt_cls = label[:, :, 2].long()
-    gt_txtytwth = label[:, :, 3:-1].float()
+    gt_txtyztwthtd = label[:, :, 3:-1].float()
     gt_box_scale_weight = label[:, :, -1]
     gt_mask = (gt_box_scale_weight > 0.).float()
 
     # objectness loss
+    # inputs, targets, mask
     pos_loss, neg_loss = conf_loss_function(pred_conf, gt_conf, gt_obj)
     conf_loss = obj * pos_loss + noobj * neg_loss
     
     # class loss
+    # todo pred_cls 和 gt_cls 维度不一致, 但代码能运行并计算出数值
     cls_loss = torch.mean(torch.sum(cls_loss_function(pred_cls, gt_cls) * gt_mask, 1))
     
     # box loss
-    txty_loss = torch.mean(torch.sum(torch.sum(txty_loss_function(txty_pred, gt_txtytwth[:, :, :2]), 2) * gt_box_scale_weight * gt_mask, 1))
-    twth_loss = torch.mean(torch.sum(torch.sum(twth_loss_function(twth_pred, gt_txtytwth[:, :, 2:]), 2) * gt_box_scale_weight * gt_mask, 1))
+    txty_loss = torch.mean(torch.sum(torch.sum(txty_loss_function(txtytz_pred, gt_txtyztwthtd[:, :, :3]), 2) * gt_box_scale_weight * gt_mask, 1))
+    twth_loss = torch.mean(torch.sum(torch.sum(twth_loss_function(twthtd_pred, gt_txtyztwthtd[:, :, 3:]), 2) * gt_box_scale_weight * gt_mask, 1))
 
     txtytwth_loss = txty_loss + twth_loss
 

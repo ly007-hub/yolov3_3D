@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="RemoteMappingsManager">
+    <list>
+      <list>
+        <remote-mappings server-id="python@sftp://liyi219@172.21.124.170:22/home/liyi219/anaconda3/bin/python3.7">
+          <settings>
+            <list>
+              <mapping local-root="$PROJECT_DIR$" remote-root="/home/liyi219/python/yolov3_3D" />
+            </list>
+          </settings>
+        </remote-mappings>
+        <remote-mappings server-id="python@sftp://medai04@172.21.141.36:22/home/medai04/anaconda3/bin/python3.6" />
+      </list>
+    </list>
+  </component>
+</project>

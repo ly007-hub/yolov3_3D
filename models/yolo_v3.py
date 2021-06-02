@@ -17,7 +17,7 @@ class myYOLOv3(nn.Module):
         self.trainable = trainable
         self.conf_thresh = conf_thresh
         self.nms_thresh = nms_thresh
-        self.stride = [8, 16, 32]
+        self.stride = [4, 8, 12]
         self.anchor_size = torch.tensor(anchor_size).view(3, len(anchor_size) // 3, 3)
         self.anchor_number = self.anchor_size.size(1)
 
@@ -73,6 +73,7 @@ class myYOLOv3(nn.Module):
             ws, hs, ds = w // s, h // s, d // s
             grid_y, grid_x, grid_z = torch.meshgrid([torch.arange(hs), torch.arange(ws), torch.arange(ds)])
             grid_xyz = torch.stack([grid_x, grid_y, grid_z], dim=-1).float()
+            grid_xyz = torch.stack([grid_xyz, grid_xyz, grid_xyz], dim=-1).float()
             grid_xyz = grid_xyz.view(1, hs * ws * ds, 3, 3)
 
             # generate stride tensor
@@ -134,18 +135,18 @@ class myYOLOv3(nn.Module):
         # b_w = anchor_w * exp(tw),     b_h = anchor_h * exp(th)
         b_whd_pred = torch.exp(txtytwth_pred[:, :, :, 3:]) * self.all_anchors_wh
         # [B, H*W, anchor_n, 4] -> [B, H*W*anchor_n, 4]
-        xyzwhd_pred = torch.cat([c_xyz_pred, b_whd_pred], -1).view(B, HWD * ab_n, 4)
+        xyzwhd_pred = torch.cat([c_xyz_pred, b_whd_pred], -1).view(B, HWD * ab_n, 6)
         
         """
         B, HWD, ab_n, _ = txtytwth_pred.size()
         c_xyz_pred = (torch.sigmoid(txtytwth_pred[:, :, :, :3]) + yolo_net.grid_cell) * yolo_net.stride_tensor
-        b_whd_pred = torch.exp(txtytwth_pred[:, :, :, 2:]) * yolo_net.all_anchors_wh
-        xywh_pred = torch.cat([c_xy_pred, b_wh_pred], -1).view(B, HWD * ab_n, 4)
+        b_whd_pred = torch.exp(txtytwth_pred[:, :, :, 3:]) * yolo_net.all_anchors_wh
+        xyzwhd_pred = torch.cat([c_xyz_pred, b_whd_pred], -1).view(B, HWD * ab_n, 6)
         """
 
-        return xywh_pred
+        return xyzwhd_pred
 
-    def decode_boxes(self, txtytwth_pred):
+    def decode_boxes(self, txtytztwthtd_pred):
         """
             Input:
                 txtytwth_pred : [B, H*W, anchor_n, 4] containing [tx, ty, tw, th]
@@ -153,14 +154,17 @@ class myYOLOv3(nn.Module):
                 x1y1x2y2_pred : [B, H*W, anchor_n, 4] containing [xmin, ymin, xmax, ymax]
         """
         # [B, H*W*anchor_n, 4]
-        xywh_pred = self.decode_xywh(txtytwth_pred)
+        xyzwhd_pred = self.decode_xywh(txtytztwthtd_pred)
+        # xywh_pred = yolo_net.decode_xywh(txtytztwthtd_pred)
 
-        # [center_x, center_y, w, h] -> [xmin, ymin, xmax, ymax]
-        x1y1x2y2_pred = torch.zeros_like(xywh_pred)
-        x1y1x2y2_pred[:, :, 0] = (xywh_pred[:, :, 0] - xywh_pred[:, :, 2] / 2)
-        x1y1x2y2_pred[:, :, 1] = (xywh_pred[:, :, 1] - xywh_pred[:, :, 3] / 2)
-        x1y1x2y2_pred[:, :, 2] = (xywh_pred[:, :, 0] + xywh_pred[:, :, 2] / 2)
-        x1y1x2y2_pred[:, :, 3] = (xywh_pred[:, :, 1] + xywh_pred[:, :, 3] / 2)
+        # [center_x, center_y, center_z, w, h, d] -> [xmin, ymin, zmin, xmax, ymax, zmax]
+        x1y1x2y2_pred = torch.zeros_like(xyzwhd_pred)
+        x1y1x2y2_pred[:, :, 0] = (xyzwhd_pred[:, :, 0] - xyzwhd_pred[:, :, 3] / 2)
+        x1y1x2y2_pred[:, :, 1] = (xyzwhd_pred[:, :, 1] - xyzwhd_pred[:, :, 4] / 2)
+        x1y1x2y2_pred[:, :, 2] = (xyzwhd_pred[:, :, 2] - xyzwhd_pred[:, :, 5] / 2)
+        x1y1x2y2_pred[:, :, 3] = (xyzwhd_pred[:, :, 0] + xyzwhd_pred[:, :, 3] / 2)
+        x1y1x2y2_pred[:, :, 4] = (xyzwhd_pred[:, :, 1] + xyzwhd_pred[:, :, 4] / 2)
+        x1y1x2y2_pred[:, :, 5] = (xyzwhd_pred[:, :, 2] + xyzwhd_pred[:, :, 5] / 2)
 
         return x1y1x2y2_pred
 
@@ -237,7 +241,7 @@ class myYOLOv3(nn.Module):
 
 
 
-    def forward(self, x, target=None):
+    def test(self, x, target=None):
         # backbone
         fmp_1, fmp_2, fmp_3 = self.backbone(x)
         # fmp_1, fmp_2, fmp_3 = model.backbone(x)
@@ -406,7 +410,7 @@ class myYOLOv3(nn.Module):
 
             return conf_loss, cls_loss, txtytwth_loss, total_loss
 
-    def test(self, x, target=None):
+    def forward(self, x, target=None):
         fmp_1, fmp_2, fmp_3 = self.backbone(x)
 
         fmp_3 = self.conv_set_3(fmp_3)
@@ -433,30 +437,38 @@ class myYOLOv3(nn.Module):
         pred_1 = self.pred_1(fmp_1)
 
         """
-        fmp_1, fmp_2, fmp_3 = yolo_net.backbone(input_3D)
+        x = images
+        target = targets
+        fmp_1, fmp_2, fmp_3 = model.backbone(x)
 
-        fmp_3 = yolo_net.conv_set_3(fmp_3)
-        temp_3 = yolo_net.conv_1x1_3(fmp_3)
+        fmp_3 = model.conv_set_3(fmp_3)
+        temp_3 = model.conv_1x1_3(fmp_3)
         # 对于体积volumetric输入，则期待着5D张量的输入，即minibatch x channels x depth x height x width
         fmp_3_up = F.interpolate(temp_3, scale_factor=2.0, mode='trilinear', align_corners=True)
 
         fmp_2 = torch.cat([fmp_2, fmp_3_up], 1)
-        fmp_2 = yolo_net.conv_set_2(fmp_2)
-        fmp_2_up = F.interpolate(yolo_net.conv_1x1_2(fmp_2), scale_factor=2.0, mode='trilinear', align_corners=True)
+        fmp_2 = model.conv_set_2(fmp_2)
+        fmp_2_up = F.interpolate(model.conv_1x1_2(fmp_2), scale_factor=2.0, mode='trilinear', align_corners=True)
 
         fmp_1 = torch.cat([fmp_1, fmp_2_up], 1)
-        fmp_1 = yolo_net.conv_set_1(fmp_1)
+        fmp_1 = model.conv_set_1(fmp_1)
 
-        fmp_3 = yolo_net.extra_conv_3(fmp_3)
-        pred_3 = yolo_net.pred_3(fmp_3)
+        fmp_3 = model.extra_conv_3(fmp_3)
+        pred_3 = model.pred_3(fmp_3)
 
         # s = 16
-        fmp_2 = yolo_net.extra_conv_2(fmp_2)
-        pred_2 = yolo_net.pred_2(fmp_2)
+        fmp_2 = model.extra_conv_2(fmp_2)
+        pred_2 = model.pred_2(fmp_2)
 
         # s = 8
-        fmp_1 = yolo_net.extra_conv_1(fmp_1)
-        pred_1 = yolo_net.pred_1(fmp_1)
+        fmp_1 = model.extra_conv_1(fmp_1)
+        pred_1 = model.pred_1(fmp_1)
+          
+        preds = [pred_1, pred_2, pred_3]
+        total_conf_pred = []
+        total_cls_pred = []
+        total_txtytwth_pred = []
+        B = HWD = 0
         """
 
         preds = [pred_1, pred_2, pred_3]
@@ -483,6 +495,9 @@ class myYOLOv3(nn.Module):
             total_conf_pred.append(conf_pred)
             total_cls_pred.append(cls_pred)
             total_txtytwth_pred.append(txtytwth_pred)
+
+            B = B_
+            HWD += H_ * W_ * D_
             
             """
             for pred in preds:
@@ -493,14 +508,14 @@ class myYOLOv3(nn.Module):
     
                 # Divide prediction to obj_pred, xywh_pred and cls_pred
                 # [B, H*W*anchor_n, 1]
-                conf_pred = pred[:, :, :1 * yolo_net.anchor_number].contiguous().view(B_, H_ * W_ * D_ * yolo_net.anchor_number, 1)
+                conf_pred = pred[:, :, :1 * model.anchor_number].contiguous().view(B_, H_ * W_ * D_ * model.anchor_number, 1)
                 # [B, H*W*anchor_n, num_cls]
                 cls_pred = pred[:, :,
-                           1 * yolo_net.anchor_number: (1 + yolo_net.num_classes) * yolo_net.anchor_number].contiguous().view(B_,
-                                                                                                                  H_ * W_ * D_ * yolo_net.anchor_number,
-                                                                                                                  yolo_net.num_classes)
+                           1 * model.anchor_number: (1 + model.num_classes) * model.anchor_number].contiguous().view(B_,
+                                                                                                                  H_ * W_ * D_ * model.anchor_number,
+                                                                                                                  model.num_classes)
                 # [B, H*W*anchor_n, 4]
-                txtytwth_pred = pred[:, :, (1 + yolo_net.num_classes) * yolo_net.anchor_number:].contiguous()
+                txtytwth_pred = pred[:, :, (1 + model.num_classes) * model.anchor_number:].contiguous()
                 total_conf_pred.append(conf_pred)
                 total_cls_pred.append(cls_pred)
                 total_txtytwth_pred.append(txtytwth_pred)
@@ -508,8 +523,7 @@ class myYOLOv3(nn.Module):
                 HWD += H_ * W_ * D_
             """
 
-            B = B_
-            HWD += H_ * W_ * D_
+
 
         conf_pred = torch.cat(total_conf_pred, 1)
         cls_pred = torch.cat(total_cls_pred, 1)
@@ -535,20 +549,22 @@ class myYOLOv3(nn.Module):
         else:
             txtytwth_pred = txtytwth_pred.view(B, HWD, self.anchor_number, 6)
             # decode bbox, and remember to cancel its grad since we set iou as the label of objectness.
+            # [xmin, ymin, zmin, xmax, ymax, zmax] /
             with torch.no_grad():
-                x1y1x2y2_pred = (self.decode_boxes(txtytwth_pred) / self.scale_torch).view(-1, 4)
+                x1y1x2y2_pred = (self.decode_boxes(txtytwth_pred) / self.scale_torch).view(-1, 6)
 
             """
-            txtytwth_pred = txtytwth_pred.view(B, HWD, yolo_net.anchor_number, 6)
+            txtytwth_pred = txtytwth_pred.view(B, HWD, model.anchor_number, 6)
             # decode bbox, and remember to cancel its grad since we set iou as the label of objectness.
-            with torch.no_grad(): problem
-                x1y1x2y2_pred = (yolo_net.decode_boxes(txtytwth_pred) / yolo_net.scale_torch).view(-1, 5)
+            with torch.no_grad():
+                x1y1x2y2_pred = (model.decode_boxes(txtytwth_pred) / model.scale_torch).view(-1, 6)
             """
 
-            txtytwth_pred = txtytwth_pred.view(B, -1, 5)
+            txtytwth_pred = txtytwth_pred.view(B, -1, 6)
 
-            x1y1x2y2_gt = target[:, :, 7:].view(-1, 4)
-            # x1y1x2y2_gt = torch.ones([1, 1752, 5])
+            #  target = torch.ones([1, 1752, 9])
+            x1y1x2y2_gt = target[:, :, 9:].view(-1, 6)
+            # x1y1x2y2_gt = torch.ones([1752, 6])
 
             # compute iou
             iou = tools.iou_score(x1y1x2y2_pred, x1y1x2y2_gt).view(B, -1, 1)
@@ -556,7 +572,7 @@ class myYOLOv3(nn.Module):
 
             # we set iou between pred bbox and gt bbox as conf label.
             # [obj, cls, txtytwth, scale_weight, x1y1x2y2] -> [conf, obj, cls, txtytwth, scale_weight]
-            target = torch.cat([iou, target[:, :, :7]], dim=2)
+            target = torch.cat([iou, target[:, :, :9]], dim=2)
 
             conf_loss, cls_loss, txtytwth_loss, total_loss = tools.loss(pred_conf=conf_pred, pred_cls=cls_pred,
                                                                         pred_txtytwth=txtytwth_pred,
@@ -581,5 +597,5 @@ if __name__ == '__main__':
                    [331.84, 194.56, 262.5], [227.84, 325.76, 276], [365.44, 358.72, 361.5]]
 
     input_3D = torch.ones([1, 3, 64, 64, 64])
-    yolo_net = myYOLOv3(torch.device("cpu"), input_size=[416, 416, 416], num_classes=20, trainable=True, anchor_size=anchor_size, hr=False)
+    yolo_net = myYOLOv3(torch.device("cpu"), input_size=[64, 64, 64], num_classes=20, trainable=True, anchor_size=anchor_size, hr=False)
     output_3D = yolo_net.test(input_3D)

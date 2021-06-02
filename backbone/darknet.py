@@ -224,7 +224,7 @@ class DarkNet_53(nn.Module):
         super(DarkNet_53, self).__init__()
         # stride = 2
         self.layer_1 = nn.Sequential(
-            Conv_BN_LeakyReLU(3, 32, 3, padding=1),
+            Conv_BN_LeakyReLU(1, 32, 3, padding=1),
             Conv_BN_LeakyReLU(32, 64, 3, padding=1, stride=2),
             resblock(64, nblocks=1)
         )

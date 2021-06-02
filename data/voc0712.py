@@ -1,10 +1,12 @@
 """VOC Dataset Classes
 
+
 Original author: Francisco Massa
 https://github.com/fmassa/vision/blob/voc_dataset/torchvision/datasets/voc.py
 
 Updated by: Ellis Brown, Max deGroot
 """
+
 import os.path as osp
 import sys
 import torch
@@ -25,7 +27,7 @@ VOC_CLASSES = (  # always index 0
 
 # note: if you used our download scripts, this should be right
 # path_to_dir = osp.dirname(osp.abspath(__file__))
-VOC_ROOT = "/data/liyi219/VOCdevkit"
+VOC_ROOT = "/data/ly/data/VOCdevkit"
 
 
 class VOCAnnotationTransform(object):
