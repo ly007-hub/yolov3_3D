@@ -8,8 +8,8 @@ import numpy as np
 sep = os.sep
 from medical_data_load.utils import *
 from medical_data_load.config_dataset import config as data_config
-# from wama.utils import *
 import SimpleITK as sitk
+from lyi.utils import *
 import medical_data_load.config_dataset
 # 医学数据集-3D
 # 胰腺（具体名字待补充，CT 的），
@@ -65,12 +65,12 @@ def read_nii2array4miccai_pancreas(img_pth, mask_pth, aim_spacing, aim_shape, or
     shape = np.array(image_reader.sementic_mask['CT'].shape) / np.array(mask.shape)
     shape = [shape[0], shape[0], shape[1], shape[1], shape[2], shape[2]]
     # resize bbox
-    bbox =  np.array(image_reader.bbox['CT']) / np.array(shape)
+    bbox = np.array(image_reader.bbox['CT']) / np.array(shape)
 
     # 由于mask存在肿瘤和胰腺，而我们只需保存胰腺即可，所以要把胰腺和肿瘤合并！
     mask = (mask >= 0.5).astype(mask.dtype)
 
-    return scan, bbox
+    return scan, mask, bbox
 
 
 def resize4pancreasNII(scan, aimspace = [64, 64, 64], order = 0, is_mask = False, is_NIH = False):
@@ -151,7 +151,7 @@ def remove_bg4pancreasNII(scan):
     dim0min, dim0max, dim1min, dim1max, dim2min, dim2max = [np.min(indexx[0]), np.max(indexx[0]),
                                                             np.min(indexx[1]), np.max(indexx[1]),
                                                             np.min(indexx[2]), np.max(indexx[2])]
-    return [dim0min, dim0max, dim1min, dim1max]
+    return [dim0min, dim0max, dim1min, dim1max, dim2min, dim2max]
 
 
 def get_dataset_NIH_pancreas(preload_cache = False, order = 3):
@@ -183,10 +183,12 @@ def get_dataset_NIH_pancreas(preload_cache = False, order = 3):
                 break
         """
         for index, case in enumerate(train_list):
+            # if index == 0: break
             print('loading ', index+1, '/', len(train_list), '...')
-            scan, bbox = read_nii2array4miccai_pancreas(case['img_path'], case['mask_path'], aim_spacing, aim_shape, order, True, cut_bg)
+            scan, mask, bbox = read_nii2array4miccai_pancreas(case['img_path'], case['mask_path'], aim_spacing, aim_shape, order, True, cut_bg)
             print(scan.shape)
             case['img'] = scan.astype(np.float32)
+            case['mask'] = mask.astype(np.float32)
             case['bbox'] = bbox.astype(np.float32)
 
 
@@ -202,7 +204,7 @@ if __name__ == '__main__':
     #             [dataset, data_config])
 
     dataset2 = get_dataset_NIH_pancreas(preload_cache=True, order=0)
-    save_as_pkl(r'/data/liyi219/pnens_3D_data/after_dealing/pre_order0_64_64_64_new.pkl',
+    save_as_pkl(r'/data/liyi219/pnens_3D_data/after_dealing/pre_order0_128_128_64_new.pkl',
                 [dataset2, data_config])
 
     # 可以直接变成2D的数据集

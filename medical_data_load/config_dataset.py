@@ -25,7 +25,6 @@ config = dict(
     NIH_pancreas_data_aimspace=[0.5, 0.5, 0.8],  # respacing
     # NIH_pancreas_data_aimspace = [1.0,1.0,1.6], # respacing
     # NIH_pancreas_data_aimspace = None, # respacing
-    NIH_pancreas_data_aimshape=[64, 64, 64],  # 最终形状，经过resize和减裁的,todo 这个要自己好好计算
-    # NIH_pancreas_data_aimshape = [96,96,48], # 最终形状，经过resize和减裁的,todo 这个要自己好好计算
+    NIH_pancreas_data_aimshape=[128, 128, 64],  # 最终形状，经过resize和减裁的,todo 这个要自己好好计算
     NIH_pancreas_data_cut_bg=False,  # 去掉背景
 )

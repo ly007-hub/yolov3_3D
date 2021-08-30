@@ -4,7 +4,11 @@ import warnings
 import numpy as np
 import SimpleITK as sitk
 from scipy.ndimage import zoom
-
+# if False:
+#     try:
+#         from mayavi import mlab
+#     except:
+#         pass
 
 sep = os.sep
 
@@ -59,7 +63,7 @@ data_config = dict(
     NIH_pancreas_data_aimspace=[0.5, 0.5, 0.8],  # respacing
     # NIH_pancreas_data_aimspace = [1.0,1.0,1.6], # respacing
     # NIH_pancreas_data_aimspace = None, # respacing
-    NIH_pancreas_data_aimshape=[64, 64, 64],  # 最终形状，经过resize和减裁的,todo 这个要自己好好计算
+    NIH_pancreas_data_aimshape=[128, 128, 64],  # 最终形状，经过resize和减裁的,todo 这个要自己好好计算
     # NIH_pancreas_data_aimshape = [96,96,48], # 最终形状，经过resize和减裁的,todo 这个要自己好好计算
     NIH_pancreas_data_cut_bg=False,  # 去掉背景
 )
@@ -208,7 +212,7 @@ class wama():
         if img_type in self.scan.keys():
             warnings.warn(r'alreay has type "' + img_type + r'", now replace it')
         # 读取数据
-        scan, spacing, origin, transfmat, axesOrder = readIMG(img_path)
+        scan, bbox, spacing, origin, transfmat, axesOrder = readIMG(img_path)
         # 存储到对象
         self.scan[img_type] = scan
         self.spacing[img_type] = spacing
@@ -862,3 +866,115 @@ def getbbox(scan):
     bbox = [coronal_bbox[0], coronal_bbox[-1], sagittal_bbox[0], sagittal_bbox[-1], axial_bbox[0], axial_bbox[-1]]
 
     return bbox
+
+def resize3D(img, aimsize, order=3):
+    """
+
+    :param img: 3D array
+    :param aimsize: list, one or three elements, like [256], or [256,56,56]
+    :return:
+    """
+    _shape = img.shape
+    if len(aimsize) == 1:
+        aimsize = [aimsize[0] for _ in range(3)]
+    if aimsize[0] is None:
+        return zoom(img, (1, aimsize[1] / _shape[1], aimsize[2] / _shape[2]),
+                    order=order)  # resample for cube_size
+    if aimsize[1] is None:
+        return zoom(img, (aimsize[0] / _shape[0], 1, aimsize[2] / _shape[2]),
+                    order=order)  # resample for cube_size
+    if aimsize[2] is None:
+        return zoom(img, (aimsize[0] / _shape[0], aimsize[1] / _shape[1], 1),
+                    order=order)  # resample for cube_size
+    return zoom(img, (aimsize[0] / _shape[0], aimsize[1] / _shape[1], aimsize[2] / _shape[2]),
+                order=order)  # resample for cube_size
+
+
+def show3Dslice(image):
+    """
+    查看3D体，切片模式
+    :param image:
+    :return:
+    """
+    mlab.volume_slice(image, colormap='gray',
+                      plane_orientation='x_axes', slice_index=10)  # 设定x轴切面
+    mlab.volume_slice(image, colormap='gray',
+                      plane_orientation='y_axes', slice_index=10)  # 设定y轴切面
+    mlab.volume_slice(image, colormap='gray',
+                      plane_orientation='z_axes', slice_index=10)  # 设定z轴切面
+    mlab.colorbar(orientation='vertical')
+    mlab.show()
+
+def show3D(img3D):
+    vol = mlab.pipeline.volume(mlab.pipeline.scalar_field(img3D), name='3-d ultrasound ')
+    mlab.colorbar(orientation='vertical')
+    mlab.show()
+
+def show3Dbbox(bbox3D,line_thick = None):
+    """
+    粗略的看下bbox的现状
+    :param bbox3D: list，6 elements，形如[1,60,1,70,1,80]
+    :return:
+    """
+    # 构建一个稍微比bbox
+    tmp_img = np.zeros([bbox3D[1]-bbox3D[0],
+                        bbox3D[3]-bbox3D[2],
+                        bbox3D[5]-bbox3D[4]], dtype=np.int)
+    if line_thick is None:
+        line_thick = np.max(tmp_img.shape) // 20
+
+    tmp_img[0:line_thick,:,0:line_thick] = 100
+    tmp_img[:,0:line_thick,0:line_thick] = 100
+    tmp_img[0:line_thick,0:line_thick,:] = 100
+
+    tmp_img[-1:-(line_thick+1):-1,:,0:line_thick] = 100
+    tmp_img[:,-1:-(line_thick+1):-1,0:line_thick] = 100
+    tmp_img[0:line_thick,-1:-(line_thick+1):-1,:] = 100
+
+    tmp_img[-1:-(line_thick+1):-1,:,-1:-(line_thick+1):-1] = 100
+    tmp_img[:,-1:-(line_thick+1):-1,-1:-(line_thick+1):-1] = 100
+    tmp_img[-1:-(line_thick+1):-1,-1:-(line_thick+1):-1,:] = 100
+
+    tmp_img[0:line_thick,:,-1:-(line_thick+1):-1] = 100
+    tmp_img[:,0:line_thick,-1:-(line_thick+1):-1] = 100
+    tmp_img[-1:-(line_thick+1):-1,0:line_thick,:] = 100
+
+    show3D(tmp_img)
+
+def get_bbox_in_img(img, bbox, line_thick, line_value = -2e3):
+    """
+    img和bbox对应维度一致
+    @param bbox: x1, y1, z1, x2, y2, z2
+    @param line_thick:
+    @param line_value:
+    @return:
+    """
+    if False:
+        img, bbox = img3D, bbox3D
+        line_thick = 2
+    bbox.dtype = int
+    x1, y1, z1, x2, y2, z2 = bbox
+    w, h, d = img.shape
+    img_for_bbox = np.zeros([w, h, d])
+    # img_for_bbox[:, :, :] = -200
+    # img_for_bbox[x1:x2, y1:y2, z1:z2] = 200
+    tmp_img = img
+    if line_thick is None:
+        line_thick = np.max(tmp_img.shape) // 20
+
+    tmp_img[x1:x1+line_thick, y1:y2           , z1:z1+line_thick] = line_value
+    tmp_img[x1:x2           , y1:y1+line_thick, z1:z1+line_thick] = line_value
+    tmp_img[x1:x1+line_thick, y1:y1+line_thick, z1:z2] = line_value
+
+    tmp_img[x2-line_thick:x2       , y1:y2           , z1:z1+line_thick] = line_value
+    tmp_img[x1:x2                  , y2-line_thick:y2, z1:z1+line_thick] = line_value
+    tmp_img[x1:x1+line_thick       , y2-line_thick:y2, z1:z2] = line_value
+
+    tmp_img[x2-line_thick:x2       , y1:y2                  , z2-line_thick:z2] = line_value
+    tmp_img[x1:x2                  , y2-line_thick:y2       , z2-line_thick:z2] = line_value
+    tmp_img[x2-line_thick:x2       , y2-line_thick:y2       , z1:z2] = line_value
+
+    tmp_img[x1:x1+line_thick          , y1:y2           , z2-line_thick:z2] = line_value
+    tmp_img[x1:x2                     , y1:y1+line_thick, z2-line_thick:z2] = line_value
+    tmp_img[x2-line_thick:x2          , y1:y1+line_thick, z1:z2] = line_value
+    return tmp_img
